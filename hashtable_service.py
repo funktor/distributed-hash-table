@@ -29,17 +29,18 @@ class HashTableService(Service):
                 self.replicas = eval(response)
                 print(f"Response {response} received from registry service")
                 
-                for _, _, ip, port in self.replicas:
-                    added = False
-                    
-                    for u_ip, u_port, _ in self.downstreams:
-                        if (ip, port) == (u_ip, u_port):
-                            added = True
-                            break
-                    
-                    if added is False:
-                        self.create_downstream_connections(ip, port)
-                        utils.start_thread(self.sync_commit_log, args=(ip, port,))
+                for sid, rid, ip, port in self.replicas:
+                    if sid != self.service_id:
+                        added = False
+                        
+                        for u_ip, u_port, _ in self.downstreams:
+                            if (ip, port) == (u_ip, u_port):
+                                added = True
+                                break
+                        
+                        if added is False:
+                            self.create_downstream_connections(ip, port)
+                            utils.start_thread(self.sync_commit_log, args=(ip, port,))
                 
                 print(f"Active replicas are {self.replicas}")
             
@@ -64,6 +65,9 @@ class HashTableService(Service):
             for msg in response:
                 self.handle_commands(msg)
             
+            k = len(response)
+            end = start+k-1
+            
             start, end = end+1, end+5
         
     def read_command_logs(self):
@@ -71,12 +75,12 @@ class HashTableService(Service):
             with self.lock:
                 if os.path.exists(self.commit_log.file):
                     self.commands = self.commit_log.read_log()
-                
-            time.sleep(5)
             
     def get_log_commands(self, start, end):
         with self.lock:
-            return self.commands[start:end+1]
+            if start < len(self.commands):
+                return self.commands[start:end+1]
+            return []
         
     def handle_commands(self, msg):
         set_ht = re.match('^set ([a-zA-Z0-9]+) ([a-zA-Z0-9]+) ([0-9\.]+)$', msg)
