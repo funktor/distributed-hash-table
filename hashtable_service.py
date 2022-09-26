@@ -33,18 +33,19 @@ class HashTableService(Service):
                     if sid != self.service_id:
                         added = False
                         
-                        for u_ip, u_port, _ in self.downstreams:
+                        for u_ip, u_port, _, _ in self.downstreams:
                             if (ip, port) == (u_ip, u_port):
                                 added = True
                                 break
                         
                         if added is False:
                             self.create_downstream_connections(ip, port)
+                            self.create_downstream_connections(ip, port, 'commitlog')
                             utils.start_thread(self.sync_commit_log, args=(ip, port,))
                 
                 print(f"Active replicas are {self.replicas}")
             
-            time.sleep(10)
+            time.sleep(2)
     
     def get_replicas(self):
         with self.lock:
@@ -57,7 +58,7 @@ class HashTableService(Service):
                                                           rport, 
                                                           f"commitlog {start} {end}", 
                                                           num_bytes=1024*1024, 
-                                                          timeout=240)
+                                                          timeout=240, tag='commitlog')
             
             print(f"Response {response} received from {rip}:{rport}")
             response = eval(response)
@@ -68,7 +69,8 @@ class HashTableService(Service):
             k = len(response)
             end = start+k-1
             
-            start, end = end+1, end+5
+            start = end+1
+            end = start+4
         
     def read_command_logs(self):
         while True:
@@ -78,9 +80,11 @@ class HashTableService(Service):
             
     def get_log_commands(self, start, end):
         with self.lock:
-            if start < len(self.commands):
-                return self.commands[start:end+1]
-            return []
+            return self.commands[start:min(end+1, len(self.commands))]
+    
+    def set_log_command(self, command):
+        with self.lock:
+            self.commands += [command]
         
     def handle_commands(self, msg):
         set_ht = re.match('^set ([a-zA-Z0-9]+) ([a-zA-Z0-9]+) ([0-9\.]+)$', msg)
@@ -97,15 +101,19 @@ class HashTableService(Service):
             old = self.ht.get_timestamp(key=key)
             if old is None or old < timestamp:
                 self.ht.set(key=key, value=value, timestamp=timestamp)
+                self.set_log_command(msg)
                 self.commit_log.log(msg)
                 self.broadcast_write(msg)
-            
-            output = "Inserted"
+                output = "Inserted"
+            else:
+                output = "Key already latest version"
         
         elif get_ht:
             key = get_ht.groups()
             key = key[0]
             output = self.ht.get_value(key=key)
+            if output is None:
+                output = 'Error: Non existent key'
         
         elif log:
             start, end = log.groups()

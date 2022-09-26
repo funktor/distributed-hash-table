@@ -40,13 +40,13 @@ class Service:
         
         self.upstream_connector = sock
     
-    def create_downstream_connections(self, ip_address, port):
+    def create_downstream_connections(self, ip_address, port, tag='default'):
         sock = get_socket()
         sock.setblocking(False)
         sock.settimeout(self.default_timeout)
         sock.connect((str(ip_address), int(port)))
         
-        self.downstreams += [(ip_address, port, sock)]
+        self.downstreams += [(ip_address, port, sock, tag)]
         
     def listen_to_clients(self):
         while True:
@@ -65,9 +65,9 @@ class Service:
         except:
             print(f"Could not send message {msg} to {conn}")
     
-    def send_message_addr(self, ip_address, port, msg):
-        for conn_ip, conn_port, conn in self.downstreams:
-            if (conn_ip, conn_port) == (ip_address, port):
+    def send_message_addr(self, ip_address, port, msg, tag='default'):
+        for conn_ip, conn_port, conn, conn_tag in self.downstreams:
+            if (conn_ip, conn_port, conn_tag) == (ip_address, port, tag):
                 self.send_message_conn(conn, msg)
                 return
     
@@ -84,9 +84,9 @@ class Service:
             print(f"Could not receive message from {conn}")
             return None
     
-    def receive_message_addr(self, ip_address, port, num_bytes=2048, timeout=30):
-        for conn_ip, conn_port, conn in self.downstreams:
-            if (conn_ip, conn_port) == (ip_address, port):
+    def receive_message_addr(self, ip_address, port, num_bytes=2048, timeout=30, tag='default'):
+        for conn_ip, conn_port, conn, conn_tag in self.downstreams:
+            if (conn_ip, conn_port, conn_tag) == (ip_address, port, tag):
                 return self.receive_message_conn(conn, num_bytes, timeout)
         
         raise Exception("Invalid ip and port provided")
@@ -99,7 +99,7 @@ class Service:
         resp = self.receive_message_conn(conn, num_bytes, timeout)
         return resp
     
-    def send_and_receive_message_addr(self, ip, port, msg, num_bytes=2048, timeout=30):
-        self.send_message_addr(ip, port, msg)
-        resp = self.receive_message_addr(ip, port, num_bytes, timeout)
+    def send_and_receive_message_addr(self, ip, port, msg, num_bytes=2048, timeout=30, tag='default'):
+        self.send_message_addr(ip, port, msg, tag)
+        resp = self.receive_message_addr(ip, port, num_bytes, timeout, tag)
         return resp

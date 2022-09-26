@@ -25,7 +25,7 @@ class Route(Service):
                     for _, _, ip, port in self.running_instances:
                         added = False
                         
-                        for u_ip, u_port, _ in self.downstreams:
+                        for u_ip, u_port, _, _ in self.downstreams:
                             if (ip, port) == (u_ip, u_port):
                                 added = True
                                 break

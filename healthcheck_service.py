@@ -25,15 +25,17 @@ class HealthCheckService(Service):
     def start_new_service(self, service_id, replica_id, ip, port):
         os.system(f"start \"HashTable Service {service_id}-{replica_id}-{ip}-{port}\" python \"hashtable_service.py\" \"{service_id}\" \"{replica_id}\" \"{ip}\" \"{port}\"")
         k = -1
+        t = None
         for i in range(len(self.downstreams)):
-            conn_ip, conn_port, conn = self.downstreams[i]
+            conn_ip, conn_port, conn, conn_tag = self.downstreams[i]
             if (conn_ip, conn_port) == (ip, port):
                 k = i
+                t = conn_tag
                 break
         
         if k >= 0:
             self.downstreams.pop(k)
-            self.create_downstream_connections(ip, port)
+            self.create_downstream_connections(ip, port, t)
         
         self.add_to_active_connections((service_id, replica_id, ip, port))
         
