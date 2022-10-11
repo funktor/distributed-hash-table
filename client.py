@@ -1,6 +1,11 @@
-import sys
+import sys, socket
 from threading import Thread
-from socket_handler import get_socket
+
+def get_socket():
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    
+    return sock
  
 if len(sys.argv) != 3:
     print ("Correct usage: script, IP address, port number")
@@ -21,6 +26,10 @@ t = Thread(target=listen_for_messages)
 t.daemon = True
 t.start()
 
+request_id = 0
+
 while True:
     command = input()
+    command = command + ' ' + str(request_id)
     server.send(command.encode())
+    request_id += 1
