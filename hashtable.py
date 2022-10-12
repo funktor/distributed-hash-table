@@ -7,7 +7,10 @@ class HashTable:
     
     def set(self, key, value, req_id):
         with self.lock:
-            self.map[key] = (value, req_id)
+            if key not in self.map or self.map[key][1] < req_id:
+                self.map[key] = (value, req_id)
+                return 1
+            return -1
     
     def get_value(self, key):
         with self.lock:

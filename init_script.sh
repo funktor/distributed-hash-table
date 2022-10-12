@@ -13,7 +13,7 @@ rm -rf registry.txt commit-log-*.txt
 
 python create_cluster.py "1" "registry_service.py" "['127.0.0.1:5001']"
 python create_cluster.py "2" "healthcheck_service.py" "['127.0.0.1:5002']"
-python create_cluster.py "3" "consistent_hashing_service.py" "['127.0.0.1:5003']"
+python create_cluster.py "3" "consistent_hashing_service.py" "['127.0.0.1:5003', '127.0.0.1:5004']"
 python create_cluster.py "4" "hashtable_service.py" "['127.0.0.1:5005', '127.0.0.1:5006']"
 python create_cluster.py "5" "hashtable_service.py" "['127.0.0.1:5007', '127.0.0.1:5008']"
 start "Client Service" python "client.py" "127.0.0.1" "5007"

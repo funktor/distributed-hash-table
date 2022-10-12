@@ -11,14 +11,22 @@ class ConsistentHashing:
     
     def add_node_hash(self, node_id):
         with self.lock:
-            for i in range(self.node_multiplier):
-                h = mmh3.hash(node_id + str(i), signed=False)
-                self.node_hashes.add((h, node_id))
+            existing = self.node_exists(node_id)
+            if existing is False:
+                for i in range(self.node_multiplier):
+                    h = mmh3.hash(node_id + str(i), signed=False)
+                    self.node_hashes.add((h, node_id))
+                return 1
+            return -1
     
     def add_key_hash(self, key):
         with self.lock:
-            h = mmh3.hash(key, signed=False)
-            self.key_hashes.add((h, key))
+            existing = self.key_exists(key)
+            if existing is False:
+                h = mmh3.hash(key, signed=False)
+                self.key_hashes.add((h, key))
+                return 1
+            return -1
         
     def get_next_node(self, key):
         with self.lock:
