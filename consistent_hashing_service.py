@@ -29,25 +29,25 @@ class ConsistentHashingService(Service):
             node_id = put_node_id.groups()
             node_id = node_id[0]
             
-            if self.chash.node_exists(node_id):
-                output = "Node Exists"
-            else:
+            res = self.chash.add_node_hash(node_id)
+            
+            if res == 1:
                 self.commit_log.log(msg)
-                self.chash.add_node_hash(node_id)
                 self.update(msg)
-                output = "Node Added"
+            
+            output = "Node Added"
         
         elif put_keys_id:
             key = put_keys_id.groups()
             key = key[0]
             
-            if self.chash.key_exists(key):
-                output = "Key Exists"
-            else:
+            res = self.chash.add_key_hash(key)
+            
+            if res == 1:
                 self.commit_log.log(msg)
-                self.chash.add_key_hash(key)
                 self.update(msg)
-                output = "Key Added"
+            
+            output = "Key Added"
         
         elif log:
             start, end = log.groups()

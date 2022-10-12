@@ -52,21 +52,18 @@ class HashTableService(Service):
                 utils.start_thread(self.forward, args=(node_ip, node_port, msg))
                 output = 'Forwarded'
             else:
-                prev = self.ht.get_req_id(key=key)
+                res = self.ht.set(key=key, value=value, req_id=req_id)
                 
-                if prev is None or prev < req_id:
+                if res == 1:
                     self.commit_log.log(msg)
-                    self.ht.set(key=key, value=value, req_id=req_id)
                     self.set_log_command(msg)
                     utils.start_thread(self.broadcast_write, args=(msg,))
                     utils.start_thread(self.send_and_receive_message_addr, 
-                                       args=(constants.CONSISTENT_HASH_SERVICE_HOST, 
-                                             constants.CONSISTENT_HASH_SERVICE_PORT, 
-                                             f"put-keys {key}", 2048, 30))
+                                        args=(constants.CONSISTENT_HASH_SERVICE_HOST, 
+                                                constants.CONSISTENT_HASH_SERVICE_PORT, 
+                                                f"put-keys {key}", 2048, 30))
                     
-                    output = "Inserted"
-                else:
-                    output = "Key already latest version"
+                output = "Inserted"
         
         elif get_ht:
             key, req_id = get_ht.groups()
