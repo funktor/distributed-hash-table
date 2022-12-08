@@ -10,16 +10,8 @@ def run_thread(fn, args):
     my_thread.daemon = True
     my_thread.start()
     return my_thread
-            
-def send_and_recv(msg, servers, socket_locks, i, res=None, timeout=-1):
-    resp = None
-    # Could not connect possible reasons:
-    # 1. Server is not ready
-    # 2. Server is busy and not responding
-    # 3. Server crashed and not responding
-    
-    start = time.time()
-    
+
+def wait_for_server_startup(servers, i):
     while True:
         try:
             if servers[i][2] is None:
@@ -31,6 +23,53 @@ def send_and_recv(msg, servers, socket_locks, i, res=None, timeout=-1):
                 sock.connect((str(ip), int(port)))
                 servers[i][2] = sock
                 
+            break
+                
+        except Exception as e:
+            print(e)
+
+def send_and_recv_no_retry(msg, servers, socket_locks, i, timeout=-1):
+    resp = None
+    # Could not connect possible reasons:
+    # 1. Server is not ready
+    # 2. Server is busy and not responding
+    # 3. Server crashed and not responding
+    
+    wait_for_server_startup(servers, i)
+    
+    try:
+        with socket_locks[i]:
+            conn = servers[i][2]   
+            # If server crashed then this will throw error. 
+            conn.send(msg.encode())
+            if timeout > 0:
+                ready = select.select([conn], [], [], timeout)
+                if ready[0]:
+                    resp = conn.recv(2048).decode()
+            else:
+                resp = conn.recv(2048).decode()
+                
+    except Exception as e:
+        print(e)
+        # The server crashed but it is still not marked in current node
+        if servers[i][2] is not None:
+            sock = servers[i][2]
+            sock.close()
+            servers[i][2] = None
+    
+    return resp
+            
+def send_and_recv(msg, servers, socket_locks, i, res=None, timeout=-1):
+    resp = None
+    # Could not connect possible reasons:
+    # 1. Server is not ready
+    # 2. Server is busy and not responding
+    # 3. Server crashed and not responding
+    
+    while True:
+        wait_for_server_startup(servers, i)
+        
+        try:
             with socket_locks[i]:
                 conn = servers[i][2]   
                 # If server crashed then this will throw error. 
@@ -51,9 +90,6 @@ def send_and_recv(msg, servers, socket_locks, i, res=None, timeout=-1):
                 sock = servers[i][2]
                 sock.close()
                 servers[i][2] = None
-            
-            # wait for 0.5 seconds before requesting again
-            time.sleep(0.5)
             
     if res is not None:
         res.put(resp)

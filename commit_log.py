@@ -12,12 +12,31 @@ class CommitLog:
             with open(self.file, 'w') as f:
                 f.truncate()
         
-    def log(self, command, sep=" "):
+    def log(self, command):
         with self.lock:
             with open(self.file, 'a') as f:
                 now = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
                 message = now + "," + command
                 f.write(f"{message}\n")
+                
+    def log_replace(self, commands, start):
+        index = 0
+        i = 0
+        with self.lock:
+            with open(self.file, 'r+') as f:
+                while i < len(commands):
+                    if index >= start:
+                        command = commands[i]
+                        i += 1
+                        now = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+                        message = now + "," + command
+                        f.write(f"{message}\n")
+                    
+                    index += 1
+                
+                f.truncate()
+        
+        return index-1
     
     def read_log(self):
         with self.lock:
