@@ -61,7 +61,7 @@ class Raft:
         self.state = 'FOLLOWER'
         self.leader_id = -1
         self.commit_index = 0
-        self.next_indices = [1]*u
+        self.next_indices = [0]*u
         self.match_indices = [0]*u
         self.election_period_ms = randint(100, 500)
         self.rpc_period_ms = 20
@@ -94,13 +94,13 @@ class Raft:
                         utils.run_thread(fn=self.request_vote, args=(j,))
     
     def request_vote(self, server):
-        logs = self.commit_log.read_log()
-        size = len(logs)
+        last_term = self.commit_log.last_term
+        last_indx = self.commit_log.last_index
         
         while True:
             if self.state == 'FOLLOWER' or self.state == 'CANDIDATE':
                 resp = \
-                    utils.send_and_recv_no_retry(f"VOTE-REQ {self.current_term} {logs[-1][0]} {size-1}", 
+                    utils.send_and_recv_no_retry(f"VOTE-REQ {self.current_term} {last_term} {last_indx}", 
                                                  self.conns[self.cluster_index], 
                                                  self.socket_locks[self.cluster_index], 
                                                  server, 
@@ -116,12 +116,12 @@ class Raft:
         if term > self.current_term:
             self.step_down(term)
         
-        logs = self.commit_log.read_log()
-        size = len(logs)
+        self_last_term = self.commit_log.last_term
+        self_last_indx = self.commit_log.last_index
         
         if term == self.current_term \
             and (self.voted_for == server or self.voted_for == -1) \
-            and (last_term > logs[-1][0] or (last_term == logs[-1][0] and last_index > size-1)):
+            and (last_term > self_last_term or (last_term == self_last_term and last_index > self_last_indx)):
                 
             self.voted_for = server
             self.set_election_timeout()
@@ -159,16 +159,17 @@ class Raft:
                 utils.run_thread(fn=self.send_append_entries_request, args=(j,))
     
     def send_append_entries_request(self, server):
-        logs = self.commit_log.read_log()
-        size = len(logs)
-        
+        size = self.commit_log.last_index+1
         self.next_indices[server] = min(self.next_indices[server], size)
         
         if size > self.next_indices[server]:
             prev_idx = self.next_indices[server]-1
-            prev_term = logs[prev_idx][0]
+            log_slice = self.commit_log.read_logs_start_end(prev_idx)
             
-            log_slice = logs[self.next_indices[server]:size]
+            prev_idx = self.next_indices[server]-1
+            prev_term = log_slice[0][0]
+            
+            log_slice = log_slice[1:]
             
             msg = f"APPEND-REQ {self.current_term} {prev_idx} {prev_term} {str(log_slice)} {self.commit_index}"
             
@@ -201,11 +202,10 @@ class Raft:
             print(f"Append reply response from {server} is : {resp}")
             
         else:
-            self_logs = self.commit_log.read_log()
-            size = len(self_logs)
+            self_logs = self.commit_log.read_logs_start_end(prev_idx, prev_idx)
             
             index = 0
-            success = prev_idx == 0 or (prev_idx < size and self_logs[prev_idx][0] == prev_term)
+            success = prev_idx == -1 or (len(self_logs) > 0 and self_logs[0][0] == prev_term)
             
             if success:
                 index = self.store_entries(prev_idx, logs)
@@ -232,8 +232,8 @@ class Raft:
         self.send_append_entries_request(server) 
                 
     def store_entries(self, prev_idx, leader_logs):
-        commands = [f"{self.current_term} {leader_logs[i]}" for i in range(len(leader_logs))]
-        index = self.commit_log.log_replace(commands, prev_idx+1)
+        commands = [f"{leader_logs[i][1]}" for i in range(len(leader_logs))]
+        index = self.commit_log.log_replace(self.current_term, commands, prev_idx+1)
         self.commit_index = index
         return index
             

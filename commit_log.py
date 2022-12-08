@@ -6,35 +6,47 @@ class CommitLog:
     def __init__(self, file='commit-log.txt'):
         self.file = file
         self.lock = Lock()
+        self.last_term = -1
+        self.last_index = -1
         
     def truncate(self):
         with self.lock:
             with open(self.file, 'w') as f:
                 f.truncate()
         
-    def log(self, command):
+        self.last_term = -1
+        self.last_index = -1
+        
+    def log(self, term, command):
         with self.lock:
             with open(self.file, 'a') as f:
                 now = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-                message = now + "," + command
+                message = f"{now},{term},{command}"
                 f.write(f"{message}\n")
+                self.last_term = term
+                self.last_index += 1
                 
-    def log_replace(self, commands, start):
+    def log_replace(self, term, commands, start):
         index = 0
         i = 0
         with self.lock:
             with open(self.file, 'r+') as f:
-                while i < len(commands):
-                    if index >= start:
-                        command = commands[i]
-                        i += 1
-                        now = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-                        message = now + "," + command
-                        f.write(f"{message}\n")
+                if len(commands) > 0:
+                    while i < len(commands):
+                        if index >= start:
+                            command = commands[i]
+                            i += 1
+                            now = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+                            message = f"{now},{term},{command}"
+                            f.write(f"{message}\n")
+                            
+                            if index > self.last_index:
+                                self.last_term = term
+                                self.last_index = index
+                        
+                        index += 1
                     
-                    index += 1
-                
-                f.truncate()
+                    f.truncate()
         
         return index-1
     
@@ -43,8 +55,24 @@ class CommitLog:
             output = []
             with open(self.file, 'r') as f:
                 for line in f:
-                    _, command = line.strip().split(",")
-                    output += [command]
+                    _, term, command = line.strip().split(",")
+                    output += [(term, command)]
+            
+            return output
+        
+    def read_logs_start_end(self, start, end=None):
+        with self.lock:
+            output = []
+            index = 0
+            with open(self.file, 'r') as f:
+                for line in f:
+                    if index >= start:
+                        _, term, command = line.strip().split(",")
+                        output += [(term, command)]
+                    
+                    index += 1
+                    if end and index > end:
+                        break
             
             return output
     
