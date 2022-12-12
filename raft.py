@@ -13,6 +13,7 @@ from pathlib import Path
 from consistent_hashing import ConsistentHashing
 import shutil, utils
 import traceback
+from queue import Queue
 
 
 class Raft:
@@ -68,6 +69,9 @@ class Raft:
         self.term_lock = Lock()
         self.vote_lock = Lock()
         self.next_indices_lock = Lock()
+        self.leader_id_lock = Lock()
+        self.commit_index_lock = Lock()
+        self.election_lock = Lock()
         
         utils.run_thread(fn=self.wait_for_servers, args=())
         
@@ -76,6 +80,7 @@ class Raft:
     def wait_for_servers(self):
         print("Waiting for servers to be ready...")
         
+        # Wait for all servers in the partition to start
         threads = []
         for j in range(len(self.partitions[self.cluster_index])):
             if j != self.server_index:
@@ -85,85 +90,36 @@ class Raft:
         
         for t in threads:
             t.join()
-            
+        
+        # Check for election timeout in the background
         utils.run_thread(fn=self.on_election_timeout, args=())
+        
+        # Sync logs or send heartbeats from leader to all servers in the background
         utils.run_thread(fn=self.leader_send_append_entries, args=())
         
-    def set_election_timeout(self):
-        with self.election_timeout_lock:
+    def set_election_timeout(self, timeout=None):
+        # Reset this whenever previous timeout expires and starts a new election
+        if timeout:
+            self.election_timeout = timeout
+        else:
             self.election_timeout = time.time() + randint(self.election_period_ms, 2*self.election_period_ms)/1000.0
-    
-    def get_election_timeout(self):
-        with self.election_timeout_lock:
-            return self.election_timeout
-        
-    def set_state(self, state):
-        with self.state_lock:
-            self.state = state
-            return self.state
-            
-    def get_state(self):
-        with self.state_lock:
-            return self.state
-        
-    def increment_term(self):
-        with self.term_lock:
-            self.current_term += 1
-            return self.current_term
-            
-    def set_term(self, term):
-        with self.term_lock:
-            self.current_term = term
-            return self.current_term
-    
-    def get_term(self):
-        with self.term_lock:
-            return self.current_term
-        
-    def set_vote(self, vote):
-        with self.vote_lock:
-            self.voted_for = vote
-            return self.voted_for
-                
-    def set_self_vote(self, vote):
-        with self.vote_lock:
-            self.votes.add(vote)
-            return self.votes
-        
-    def get_vote(self):
-        with self.vote_lock:
-            return self.voted_for
-        
-    def get_all_votes(self):
-        with self.vote_lock:
-            return self.votes
-        
-    def set_next_indices(self, i, v):
-        with self.next_indices_lock:
-            self.next_indices[i] = v
-            return self.next_indices[i]
-    
-    def get_next_indices_j(self, j):
-        with self.next_indices_lock:
-            return self.next_indices[j]
     
     def on_election_timeout(self):
         while True:
-            state = self.get_state()
-            if time.time() > self.get_election_timeout() and \
-                (state == 'FOLLOWER' or state == 'CANDIDATE'):
+            if time.time() > self.election_timeout and \
+                (self.state == 'FOLLOWER' or self.state == 'CANDIDATE'):
                 
-                print("Timeout....")   
+                print("Timeout....") 
+                self.set_election_timeout() 
                 self.start_election() 
                         
     def start_election(self):
         print("Starting election...")
         
-        self.set_election_timeout()                
-        self.set_state('CANDIDATE')
-        self.increment_term()
-        self.set_vote(self.server_index)
-        self.set_self_vote(self.server_index)
+        self.state = 'CANDIDATE'
+        self.current_term += 1
+        self.voted_for = self.server_index
+        self.votes.add(self.server_index)
         
         threads = []
         for j in range(len(self.partitions[self.cluster_index])):
@@ -177,125 +133,107 @@ class Raft:
         return True
     
     def request_vote(self, server):
-        current_term = self.get_term()
-        
-        last_term = self.commit_log.last_term
-        last_indx = self.commit_log.last_index
+        last_index, last_term = self.commit_log.get_last_index_term()
         
         while True:
             print(f"Requesting vote from {server}...")
-            state = self.get_state()
             
-            if time.time() <= self.get_election_timeout() and \
-                (state == 'FOLLOWER' or state == 'CANDIDATE'):
+            if time.time() <= self.election_timeout and \
+                (self.state == 'FOLLOWER' or self.state == 'CANDIDATE'):
                     
                 resp = \
-                    utils.send_and_recv_no_retry(f"VOTE-REQ {self.server_index} {current_term} {last_term} {last_indx}", 
+                    utils.send_and_recv_no_retry(f"VOTE-REQ {self.server_index} {self.current_term} {last_term} {last_index}", 
                                                  self.conns[self.cluster_index], 
                                                  self.socket_locks[self.cluster_index], 
                                                  server, 
                                                  timeout=self.rpc_period_ms/1000.0)
                 
-                vote_rep = re.match('^VOTE-REP ([0-9]+) ([0-9\-]+) ([0-9\-]+)$', resp)
-                
-                if vote_rep:
-                    server, curr_term, voted_for = vote_rep.groups()
-                    server = int(server)
-                    curr_term = int(curr_term)
-                    voted_for = int(voted_for)
+                if resp:
+                    vote_rep = re.match('^VOTE-REP ([0-9]+) ([0-9\-]+) ([0-9\-]+)$', resp)
                     
-                    self.process_vote_reply(server, curr_term, voted_for)
-                    break
+                    if vote_rep:
+                        server, curr_term, voted_for = vote_rep.groups()
+                        
+                        server = int(server)
+                        curr_term = int(curr_term)
+                        voted_for = int(voted_for)
+                        
+                        self.process_vote_reply(server, curr_term, voted_for)
+                        break
             else:
                 break
     
     def process_vote_request(self, server, term, last_term, last_index):
         print(f"Processing vote request from {server} {term}...")
         
-        current_term = self.get_term()
-        voted_for = self.get_vote()
-        
-        if term > current_term:
-            current_term, state, voted_for = self.step_down(term)
+        if term > self.current_term:
+            self.step_down(term)
         else:
-            self_last_term = self.commit_log.last_term
-            self_last_indx = self.commit_log.last_index
+            self_last_index, self_last_term = self.commit_log.get_last_index_term()
             
-            if term == current_term \
-                and (voted_for == server or voted_for == -1) \
-                and ((last_index == -1 and self_last_indx == -1) \
+            if term == self.current_term \
+                and (self.voted_for == server or self.voted_for == -1) \
+                and ((last_index == -1 and self_last_index == -1) \
                     or last_term > self_last_term \
-                    or (last_term == self_last_term and last_index > self_last_indx)):
+                    or (last_term == self_last_term and last_index > self_last_index)):
                 
-                voted_for = self.set_vote(server)    
-                self.set_election_timeout()
+                self.voted_for = server
         
-        return f"VOTE-REP {self.server_index} {current_term} {voted_for}"
+        return f"VOTE-REP {self.server_index} {self.current_term} {self.voted_for}"
         
     def process_vote_reply(self, server, term, voted_for):
         print(f"Processing vote reply from {server} {term}...")
         
-        current_term = self.get_term()
-        state = self.get_state()
-        votes = self.get_all_votes()
+        if term > self.current_term:
+            self.step_down(term)
         
-        if term > current_term:
-            current_term, state, voted_for = self.step_down(term)
-        
-        elif term == current_term and state == 'CANDIDATE':
+        elif term == self.current_term and self.state == 'CANDIDATE':
             if voted_for == self.server_index:
-                votes = self.set_self_vote(server)
+                self.votes.add(server)
             
-            if len(votes) > len(self.partitions[self.cluster_index])/2.0:
-                state = self.set_state('LEADER')
+            if len(self.votes) > len(self.partitions[self.cluster_index])/2.0:
+                self.state = 'LEADER'
                 self.leader_id = self.server_index
                 print(f"{self.cluster_index}-{self.server_index} became leader")
-                print(f"{votes}-{current_term}")
-        
-        return True
+                print(f"{self.votes}-{self.current_term}")
                 
     def step_down(self, term):
         print(f"Stepping down...")
-        term = self.set_term(term)
-        state = self.set_state('FOLLOWER')
-        voted_for = self.set_vote(-1)
-        self.set_election_timeout() 
-        
-        return term, state, voted_for
+        self.current_term = term
+        self.state = 'FOLLOWER'
+        self.voted_for = -1
     
     def leader_send_append_entries(self):
         print(f"Sending append entries from leader...")
         
         while True:
-            self.append_entries()
+            if self.state == 'LEADER':
+                self.append_entries()
+                last_index, _ = self.commit_log.get_last_index_term()
+                self.commit_index = last_index
                     
     def append_entries(self):
-        state = self.get_state()
+        res = Queue()
             
-        if state == 'LEADER':
-            threads = []
-            for j in range(len(self.partitions[self.cluster_index])):
-                if j != self.server_index:
-                    t = utils.run_thread(fn=self.send_append_entries_request, args=(j,))
-                    threads += [t]
-            
-            for t in threads:
-                t.join()
-        
-        return True
+        for j in range(len(self.partitions[self.cluster_index])):
+            if j != self.server_index:
+                utils.run_thread(fn=self.send_append_entries_request, args=(j,res,))
+                
+        cnts = 0
     
-    def send_append_entries_request(self, server):
+        while True:
+            # Wait for servers to respond
+            res.get(block=True)
+            cnts += 1
+            # Exclude self
+            if cnts > (len(self.partitions[self.cluster_index])/2.0)-1:
+                return
+            
+    
+    def send_append_entries_request(self, server, res=None):
         print(f"Sending append entries to {server}...")
         
-        current_term = self.get_term()
-        size = self.commit_log.last_index+1
-        
-        with self.next_indices_lock:
-            self.next_indices[server] = min(self.next_indices[server], size)
-            
-        next_indices_server = self.get_next_indices_j(server)
-        
-        prev_idx = next_indices_server-1
+        prev_idx = self.next_indices[server]-1
         log_slice = self.commit_log.read_logs_start_end(prev_idx)
         
         if prev_idx == -1:
@@ -304,12 +242,10 @@ class Raft:
             prev_term = log_slice[0][0]
             log_slice = log_slice[1:] if len(log_slice) > 1 else []
         
-        msg = f"APPEND-REQ {self.server_index} {current_term} {prev_idx} {prev_term} {str(log_slice)} {self.commit_index}"
+        msg = f"APPEND-REQ {self.server_index} {self.current_term} {prev_idx} {prev_term} {str(log_slice)} {self.commit_index}"
         
         while True:
-            state = self.get_state()
-            
-            if state == 'LEADER':
+            if self.state == 'LEADER':
                 resp = \
                     utils.send_and_recv_no_retry(msg, 
                                                 self.conns[self.cluster_index], 
@@ -317,77 +253,78 @@ class Raft:
                                                 server, 
                                                 timeout=self.rpc_period_ms/1000.0)  
                 
-                append_rep = re.match('^APPEND-REP ([0-9]+) ([0-9\-]+) ([0-9]+) ([0-9\-]+)$', resp)
-                
-                if append_rep:
-                    server, curr_term, flag, index = append_rep.groups()
-                    server = int(server)
-                    curr_term = int(curr_term)
-                    flag = int(flag)
-                    success = True if flag == 1 else False
-                    index = int(index)
+                if resp:
+                    append_rep = re.match('^APPEND-REP ([0-9]+) ([0-9\-]+) ([0-9]+) ([0-9\-]+)$', resp)
                     
-                    self.process_append_reply(server, curr_term, success, index)
-                    break
+                    if append_rep:
+                        server, curr_term, flag, index = append_rep.groups()
+                        server = int(server)
+                        curr_term = int(curr_term)
+                        flag = int(flag)
+                        success = True if flag == 1 else False
+                        index = int(index)
+                        
+                        self.process_append_reply(server, curr_term, success, index)
+                        break
             else:
                 break
+        
+        if res:   
+            res.put('ok')
         
     def process_append_requests(self, server, term, prev_idx, prev_term, logs, commit_index):
         print(f"Processing append request from {server} {term}...")
         
-        current_term = self.get_term()
         flag, index = 0, 0
-        self.leader_id = server
         
-        if term > current_term:
-            current_term, state, voted_for = self.step_down(term)
+        if term > self.current_term:
+            self.step_down()
+        
+        if term == self.current_term:
+            self.leader_id = server
             
-        elif term >= current_term:
             self_logs = self.commit_log.read_logs_start_end(prev_idx, prev_idx) if prev_idx != -1 else []
             success = prev_idx == -1 or (len(self_logs) > 0 and self_logs[0][0] == prev_term)
             
             if success:
                 index = self.store_entries(prev_idx, logs)
                 
-            self.set_election_timeout()
             flag = 1 if success else 0
+            self.set_election_timeout()
         
-        return f"APPEND-REP {self.server_index} {current_term} {flag} {index}"
+        return f"APPEND-REP {self.server_index} {self.current_term} {flag} {index}"
             
     def process_append_reply(self, server, term, success, index):
         print(f"Processing append reply from {server} {term}...")
         
-        current_term = self.get_term()
-        state = self.get_state()
-        
-        if term > current_term:
-            current_term, state, voted_for = self.step_down(term)
+        if term > self.current_term:
+            self.step_down(term)
             
-        elif state == 'LEADER' and term == current_term:
+        elif self.state == 'LEADER' and term == self.current_term:
             if success:
-                self.set_next_indices(server, index+1)
+                self.next_indices[server] = index+1
             else:
-                with self.next_indices_lock:
-                    self.next_indices[server] = max(0, self.next_indices[server]-1)
-        
-                self.send_append_entries_request(server) 
+                self.next_indices[server] = max(0, self.next_indices[server]-1)
+                self.send_append_entries_request(server)  
                 
     def store_entries(self, prev_idx, leader_logs):
-        current_term = self.get_term()
-        
         commands = [f"{leader_logs[i][1]}" for i in range(len(leader_logs))]
-        index = self.commit_log.log_replace(current_term, commands, prev_idx+1)
-        self.commit_index = index
+        last_index, _ = self.commit_log.log_replace(self.current_term, commands, prev_idx+1)
+        self.commit_index = last_index
         
         for command in commands:
-            set_ht = re.match('^SET ([^\s]+) ([^\s]+) ([0-9]+)$', command)
-            
-            if set_ht:
-                key, value, req_id = set_ht.groups()
-                req_id = int(req_id)
-                self.ht.set(key=key, value=value, req_id=req_id)
+            self.update_state_machine(command)
         
-        return index
+        return last_index
+    
+    def update_state_machine(self, command):
+        set_ht = re.match('^SET ([^\s]+) ([^\s]+) ([0-9]+)$', command)
+            
+        if set_ht:
+            key, value, req_id = set_ht.groups()
+            req_id = int(req_id)
+            self.ht.set(key=key, value=value, req_id=req_id)
+            
         
     def handle_commands(self, msg, conn):
         set_ht = re.match('^SET ([^\s]+) ([^\s]+) ([0-9]+)$', msg)
@@ -401,29 +338,42 @@ class Raft:
             try:
                 key, value, req_id = set_ht.groups()
                 req_id = int(req_id)
+                
+                # Hash based partitioning
                 node = mmh3.hash(key, signed=False) % len(self.partitions)
-                print(node)
-                print(self.leader_id)
                 
                 if self.cluster_index == node:
                     # The key is intended for current cluster
-                    
-                    state = self.get_state()
-                    current_term = self.get_term()
-                    
-                    if state == 'LEADER':
-                        # Replicate if this is leader server and req_id is the latest one corresponding to key
-                        self.commit_log.log(current_term, msg)
-                        replicated = self.append_entries()
+                    if self.state == 'LEADER':
+                        # Replicate if this is leader server
+                        last_index, _ = self.commit_log.log(self.current_term, msg)
+                        # Get response from at-least N/2 number of servers
                         
-                        if replicated:
-                            self.ht.set(key=key, value=value, req_id=req_id)
-                            output = "ok"
+                        while True:
+                            if last_index == self.commit_index:
+                                break
+                        
+                        # Set state machine
+                        self.ht.set(key=key, value=value, req_id=req_id)
+                        output = "ok"
                     else:
-                        output = utils.send_and_recv(msg, self.conns[node], self.socket_locks[node], self.leader_id)
+                        # If sent to non-leader, then forward to leader
+                        # Do not retry here because it might happen that current server becomes leader after sometime
+                        # Retry at client/upstream service end
+                        output = utils.send_and_recv_no_retry(msg, 
+                                                            self.conns[node], 
+                                                            self.socket_locks[node], 
+                                                            self.leader_id, 
+                                                            timeout=10)
+                        if output is None:
+                            output = 'ko'
                 else:
-                    # Forward to relevant cluster if key is not intended for this cluster
-                    output = utils.send_and_recv(msg, self.conns[node], self.socket_locks[node], 0)
+                    # Forward to relevant cluster (1st in partitions config) if key is not intended for this cluster
+                    # Retry here because this is different partition
+                    output = utils.send_and_recv(msg, 
+                                                 self.conns[node], 
+                                                 self.socket_locks[node], 
+                                                 0)
                     if output is None:
                         output = "ko"
                         
@@ -439,23 +389,35 @@ class Raft:
                 
                 if self.cluster_index == node:
                     # The key is intended for current cluster
-                    output = self.ht.get_value(key=key)
-                    if output:
-                        output = str(output)
+                    if self.state == 'LEADER':
+                        output = self.ht.get_value(key=key)
+                        if output:
+                            output = str(output)
+                        else:
+                            output = 'Error: Non existent key'
+                        
+                    else:
+                        # If sent to non-leader, then forward to leader
+                        # Do not retry here because it might happen that current server becomes leader after sometime
+                        # Retry at client/upstream service end
+                        output = utils.send_and_recv_no_retry(msg, 
+                                                            self.conns[node], 
+                                                            self.socket_locks[node], 
+                                                            self.leader_id, 
+                                                            timeout=10)
+                        if output is None:
+                            output = 'ko'
                         
                 else:
-                    # Forward the get request to a random node in the correct cluster
-                    indices = list(range(len(self.partitions[node])))
+                    # Forward to relevant cluster (1st in partitions config) if key is not intended for this cluster
+                    # Retry here because this is different partition
+                    output = utils.send_and_recv(msg, 
+                                                 self.conns[node], 
+                                                 self.socket_locks[node], 
+                                                 0)
+                    if output is None:
+                        output = "ko"
                     
-                    shuffle(indices)
-                    # Loop over multiple indices because some replica might be unresponsive and times out
-                    for j in indices:
-                        output = utils.send_and_recv(msg, self.conns[node], self.socket_locks[node], j, timeout=self.rpc_period_ms/1000.0)
-                        if output:
-                            break
-                    
-                if output is None:
-                    output = 'Error: Non existent key'
                     
             except Exception as e:
                 traceback.print_exc()

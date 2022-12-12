@@ -18,6 +18,10 @@ class CommitLog:
         self.last_term = 0
         self.last_index = -1
         
+    def get_last_index_term(self):
+        with self.lock:
+            return self.last_index, self.last_term
+        
     def log(self, term, command):
         # Append the term and command to file along with timestamp
         with self.lock:
@@ -27,6 +31,8 @@ class CommitLog:
                 f.write(f"{message}\n")
                 self.last_term = term
                 self.last_index += 1
+
+            return self.last_index, self.last_term
                 
     def log_replace(self, term, commands, start):
         # Replace or Append multiple commands starting at 'start' index line number in file
@@ -52,7 +58,7 @@ class CommitLog:
                     # Truncate all lines coming after last command.
                     f.truncate()
         
-        return index-1
+            return self.last_index, self.last_term
     
     def read_log(self):
         # Return in memory array of term and command

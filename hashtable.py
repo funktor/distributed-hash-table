@@ -24,7 +24,7 @@ class HashTable:
     def get_value(self, key):
         with self.lock:
             if key in self.map:
-                return self.map[key]
+                return self.map[key][0]
             return None
 
     def get_req_id(self, key):
