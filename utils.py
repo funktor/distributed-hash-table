@@ -3,7 +3,7 @@ import select
 import socket
 from threading import Thread
 import time
-
+import traceback
 
 def run_thread(fn, args):
     my_thread = Thread(target=fn, args=args)
@@ -26,7 +26,7 @@ def wait_for_server_startup(servers, i):
             break
                 
         except Exception as e:
-            print(e)
+            traceback.print_exc()
 
 def send_and_recv_no_retry(msg, servers, socket_locks, i, timeout=-1):
     resp = None
@@ -50,12 +50,12 @@ def send_and_recv_no_retry(msg, servers, socket_locks, i, timeout=-1):
                 resp = conn.recv(2048).decode()
                 
     except Exception as e:
-        print(e)
+        traceback.print_exc()
         # The server crashed but it is still not marked in current node
-        if servers[i][2] is not None:
-            sock = servers[i][2]
-            sock.close()
-            servers[i][2] = None
+        # if servers[i][2] is not None:
+        #     sock = servers[i][2]
+        #     sock.close()
+        #     servers[i][2] = None
     
     return resp
             
@@ -67,29 +67,10 @@ def send_and_recv(msg, servers, socket_locks, i, res=None, timeout=-1):
     # 3. Server crashed and not responding
     
     while True:
-        wait_for_server_startup(servers, i)
+        resp = send_and_recv_no_retry(msg, servers, socket_locks, i, timeout)
         
-        try:
-            with socket_locks[i]:
-                conn = servers[i][2]   
-                # If server crashed then this will throw error. 
-                conn.send(msg.encode())
-                if timeout > 0:
-                    ready = select.select([conn], [], [], timeout)
-                    if ready[0]:
-                        resp = conn.recv(2048).decode()
-                else:
-                    resp = conn.recv(2048).decode()
-                    
-                break
-                    
-        except Exception as e:
-            print(e)
-            # The server crashed but it is still not marked in current node
-            if servers[i][2] is not None:
-                sock = servers[i][2]
-                sock.close()
-                servers[i][2] = None
+        if resp is not None:
+            break
             
     if res is not None:
         res.put(resp)
@@ -126,7 +107,7 @@ def broadcast_write(msg, cluster, lock, socket_locks):
             else:
                 return False
         except Exception as e:
-            print(e)
+            traceback.print_exc()
             return False
 
 def broadcast_join(msg, conns, lock, socket_locks, exclude=None):
@@ -154,5 +135,5 @@ def broadcast_join(msg, conns, lock, socket_locks, exclude=None):
             else:
                 return False
         except Exception as e:
-            print(e)
+            traceback.print_exc()
             return False

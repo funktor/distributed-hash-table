@@ -31,7 +31,7 @@ class HashTable:
         with self.lock:
             if key in self.map:
                 return self.map[key][1]
-            return None
+            return -1
     
     def delete(self, key, req_id):
         with self.lock:
