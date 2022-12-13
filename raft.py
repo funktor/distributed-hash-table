@@ -91,6 +91,9 @@ class Raft:
         for t in threads:
             t.join()
         
+        # set initial election timeout
+        self.set_election_timeout()
+        
         # Check for election timeout in the background
         utils.run_thread(fn=self.on_election_timeout, args=())
         
@@ -152,7 +155,7 @@ class Raft:
             print(f"Requesting vote from {server}...")
             
             # Check if state if still CANDIDATE
-            if self.state == 'CANDIDATE':
+            if self.state == 'CANDIDATE' and time.time() < self.election_timeout:
                 resp = \
                     utils.send_and_recv_no_retry(f"VOTE-REQ {self.server_index} {self.current_term} {last_term} {last_index}", 
                                                  self.conns[self.cluster_index], 

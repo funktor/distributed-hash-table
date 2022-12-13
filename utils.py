@@ -52,10 +52,10 @@ def send_and_recv_no_retry(msg, servers, socket_locks, i, timeout=-1):
     except Exception as e:
         traceback.print_exc()
         # The server crashed but it is still not marked in current node
-        # if servers[i][2] is not None:
-        #     sock = servers[i][2]
-        #     sock.close()
-        #     servers[i][2] = None
+        if servers[i][2] is not None:
+            sock = servers[i][2]
+            sock.close()
+            servers[i][2] = None
     
     return resp
             
