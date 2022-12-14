@@ -26,7 +26,7 @@ def wait_for_server_startup(servers, i):
             break
                 
         except Exception as e:
-            traceback.print_exc()
+            traceback.print_exc(limit=1000)
 
 def send_and_recv_no_retry(msg, servers, socket_locks, i, timeout=-1):
     resp = None
@@ -50,7 +50,7 @@ def send_and_recv_no_retry(msg, servers, socket_locks, i, timeout=-1):
                 resp = conn.recv(2048).decode()
                 
     except Exception as e:
-        traceback.print_exc()
+        traceback.print_exc(limit=1000)
         # The server crashed but it is still not marked in current node
         if servers[i][2] is not None:
             sock = servers[i][2]
@@ -107,7 +107,7 @@ def broadcast_write(msg, cluster, lock, socket_locks):
             else:
                 return False
         except Exception as e:
-            traceback.print_exc()
+            traceback.print_exc(limit=1000)
             return False
 
 def broadcast_join(msg, conns, lock, socket_locks, exclude=None):
@@ -135,5 +135,5 @@ def broadcast_join(msg, conns, lock, socket_locks, exclude=None):
             else:
                 return False
         except Exception as e:
-            traceback.print_exc()
+            traceback.print_exc(limit=1000)
             return False

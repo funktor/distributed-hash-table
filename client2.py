@@ -1,5 +1,8 @@
 import sys, socket
 from threading import Thread
+import random
+from random import randint
+import utils, string, time
 
 def get_socket():
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -7,35 +10,56 @@ def get_socket():
     
     return sock
  
-if len(sys.argv) != 3:
-    print ("Correct usage: script, IP address, port number")
+if len(sys.argv) != 2:
+    print ("Correct usage: script, partitions")
     exit()
+    
+partitions = eval(str(sys.argv[1]))
 
-server_ip_address = str(sys.argv[1])
-server_port = int(sys.argv[2])
-
-server = get_socket()
-
-while True:
-    try:
-        server.connect((server_ip_address, server_port))
-        break
-    except:
-        print("Waiting for server startup....")
-
-def listen_for_messages():
+def connect_to_server():
+    i = randint(0, len(partitions)-1)
+    j = randint(0, len(partitions[i])-1)
+    
+    ip, port = partitions[i][j].split(':')
+    port = int(port)
+    
+    server = get_socket()
+    
     while True:
-        output = server.recv(2048).decode()
-        print(output)
-
-t = Thread(target=listen_for_messages)
-t.daemon = True
-t.start()
+        try:
+            server.connect((ip, port))
+            break
+        except:
+            print("Waiting for server startup....")
+    
+    return server
 
 request_id = 0
+new_server = True
+
+s=string.ascii_lowercase
 
 while True:
-    command = input()
-    command = command + ' ' + str(request_id)
-    server.send(command.encode())
+    key = ''.join(random.sample(s,random.randint(1, 5)))
+    val = random.randint(1, 100000)
+    command = f"SET {key} {val} {request_id}" #input()
+    print(command)
+    
+    # command = input()
+    # command = command + ' ' + str(request_id)
+        
+    while True:
+        if new_server:
+            server = connect_to_server()
+            new_server = False
+            
+        server.send(command.encode())
+        output = server.recv(2048).decode()
+        
+        if output == 'ko':
+            new_server = True
+        else:
+            print(output)
+            break
+    
     request_id += 1
