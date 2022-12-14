@@ -15,7 +15,13 @@ server_ip_address = str(sys.argv[1])
 server_port = int(sys.argv[2])
 
 server = get_socket()
-server.connect((server_ip_address, server_port))
+
+while True:
+    try:
+        server.connect((server_ip_address, server_port))
+        break
+    except:
+        print("Waiting for server startup....")
 
 def listen_for_messages():
     while True:

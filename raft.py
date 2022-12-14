@@ -55,7 +55,7 @@ class Raft:
         
         u = len(self.partitions[self.cluster_index])
         
-        self.state = 'FOLLOWER'
+        self.state = 'FOLLOWER' if len(self.partitions[self.cluster_index]) > 1 else 'LEADER'
         self.leader_id = -1
         self.commit_index = 0
         self.next_indices = [0]*u
@@ -262,18 +262,21 @@ class Raft:
             if j != self.server_index:
                 # Send append entries requests in parallel
                 utils.run_thread(fn=self.send_append_entries_request, args=(j,res,))
-                
-        cnts = 0
-    
-        while True:
-            # Wait for servers to respond
-            res.get(block=True)
-            cnts += 1
-            # Once we get reply from majority of servers, then return
-            # and don't wait for remaining servers
-            # Exclude self
-            if cnts > (len(self.partitions[self.cluster_index])/2.0)-1:
-                return
+        
+        if len(self.partitions[self.cluster_index]) > 1:        
+            cnts = 0
+        
+            while True:
+                # Wait for servers to respond
+                res.get(block=True)
+                cnts += 1
+                # Once we get reply from majority of servers, then return
+                # and don't wait for remaining servers
+                # Exclude self
+                if cnts > (len(self.partitions[self.cluster_index])/2.0)-1:
+                    return
+        else:
+            return
             
     
     def send_append_entries_request(self, server, res=None):
