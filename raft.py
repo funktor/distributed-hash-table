@@ -60,8 +60,8 @@ class Raft:
         self.commit_index = 0
         self.next_indices = [0]*u
         self.match_indices = [-1]*u
-        self.election_period_ms = randint(1000, 2000)
-        self.rpc_period_ms = 3000
+        self.election_period_ms = randint(1000, 10000)
+        self.rpc_period_ms = 5000
         self.election_timeout = -1
         self.rpc_timeout = [-1]*u
         self.state_lock = Lock()
@@ -458,6 +458,9 @@ class Raft:
                             # Do not retry here because it might happen that current server becomes leader after sometime
                             # Retry at client/upstream service end
                             if self.leader_id != -1 and self.leader_id != self.server_index:
+                                # If request lands up on the server which was not present in the majority
+                                # when the leader sent and received append queries successfully. The leader_id
+                                # for these servers will still be -1 
                                 output = utils.send_and_recv_no_retry(msg, 
                                                                     self.conns[node], 
                                                                     self.socket_locks[node], 
