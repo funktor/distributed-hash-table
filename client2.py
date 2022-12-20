@@ -49,17 +49,14 @@ while True:
     # command = command + ' ' + str(request_id)
         
     while True:
-        if new_server:
-            server = connect_to_server()
-            new_server = False
-            
+        server = connect_to_server()    
         server.send(command.encode())
+        
         output = server.recv(2048).decode()
         
-        if output == 'ko':
-            new_server = True
-        else:
+        if output == 'ok':
             print(output)
+            server.close()
             break
     
     request_id += 1
